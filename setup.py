@@ -6,7 +6,9 @@ build-time hook, and GEAK needs one so that
     pip install git+https://github.com/AMD-AGI/GEAK
 
 runs a best-effort bootstrap during the wheel build (clone the full repo to
-$GEAK_HOME + install the Claude Code CLI). The logic lives in geak/bootstrap.py.
+$GEAK_HOME + install the default Claude Code CLI). The optional Codex backend
+is never installed or authenticated automatically. The logic lives in
+geak/bootstrap.py.
 
 The hook fires only on a real wheel build; if pip serves a cached wheel it is
 skipped, so force a rebuild with `pip install --no-cache-dir --force-reinstall`

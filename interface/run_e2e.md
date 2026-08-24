@@ -2,8 +2,7 @@
 
 `interface/` is the **only** surface an external orchestrator (e.g. Hyperloom)
 touches. Everything volatile about the e2e workflow (the `e2e_workflow.js` arg
-names, the Claude Code `Workflow` invocation, the `--effort ultracode`
-requirement, the SDK-vs-CLI choice) is hidden behind one command and two JSON
+names and either backend's invocation details) is hidden behind one command and two JSON
 files. The result schema is versioned so callers can distinguish contract
 changes while the workflow evolves internally.
 
@@ -22,6 +21,30 @@ python interface/run_e2e.py <handoff.json> <result.json> [--dry-run]
 Discovery: the installer should export `GEAK_E2E_RUNNER` pointing at this
 file (`$GEAK_ROOT/interface/run_e2e.py`) so the caller has a single
 hard-coded handle.
+
+### Agent backend
+
+`GEAK_AGENT_BACKEND=claude|codex` selects the execution backend. It defaults to `claude`, preserving the
+existing SDK-first, Claude CLI-fallback path unchanged.
+
+The Codex path requires Node.js 18+ plus a separately installed and authenticated Codex CLI. GEAK executes the
+same Workflow JavaScript in `interface/codex_workflow/runner.js`; only `agent()` leaves become `codex exec`
+children. GEAK does not install or authenticate Codex.
+
+| Variable | Default |
+|---|---|
+| `GEAK_CODEX_BIN` | `codex` |
+| `GEAK_NODE_BIN` | `node` |
+| `GEAK_CODEX_MODEL` | unset; use Codex configuration |
+| `GEAK_CODEX_MAX_AGENTS` | `8` |
+| `GEAK_CODEX_SANDBOX` | `workspace-write` |
+| `GEAK_CODEX_BYPASS` | `0` |
+| `GEAK_CODEX_ADD_DIRS` | unset; OS path-separated directories |
+| `GEAK_CODEX_AGENT_TIMEOUT_MS` | unset; use Workflow defaults |
+
+The normal mode uses `--approve-for-me` with the configured sandbox. `GEAK_CODEX_BYPASS=1` selects
+`--dangerously-bypass-approvals-and-sandbox` and is only appropriate on an externally isolated GPU runner.
+The adapter probes required `codex exec` flags rather than pinning a Codex CLI version.
 
 The fast-path artifacts live under `<exp_root>/geak_e2e_moe_int4/`
 (`baseline/`, `validation/final/`, `final/` bundle, `director_e2e_validation.json`).

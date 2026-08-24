@@ -1,6 +1,6 @@
 .. meta::
-   :description: GEAK is an AMD multi-agent system that optimizes GPU kernels and whole-model serving throughput on ROCm, driven by Claude Code and deterministic JS Workflows.
-   :keywords: GEAK, ROCm, GPU kernel optimization, serving throughput, sglang, vLLM, AMD Instinct, Triton, HIP, CK, FlyDSL
+   :description: GEAK is an AMD multi-agent system that optimizes GPU kernels and serving throughput with deterministic JS Workflows and Claude Code or Codex.
+   :keywords: GEAK, ROCm, GPU kernel optimization, serving throughput, sglang, vLLM, AMD Instinct, Claude Code, Codex, Triton, HIP, CK, FlyDSL
 
 GEAK documentation
 ==================
@@ -9,7 +9,7 @@ GEAK (Generating Efficient AI-Centric Kernels) is a multi-agent GPU performance 
 AMD Instinct™ MI GPUs (CDNA). It ships two deterministic Workflows: ``e2e_workflow`` raises the
 end-to-end sglang or vLLM serving throughput of a whole model, and ``kernel_workflow`` optimizes a
 single AMD GPU kernel (Triton, HIP, CK, FlyDSL). Control flow is deterministic JS; LLM agents are called
-only for judgment.
+only for judgment. Claude Code is the default agent backend, with Codex available through a thin adapter.
 
 The GEAK public repository is located at `AMD-AGI/GEAK <https://github.com/AMD-AGI/GEAK>`_.
 

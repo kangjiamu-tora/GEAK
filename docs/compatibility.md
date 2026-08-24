@@ -1,14 +1,14 @@
 ---
 myst:
     html_meta:
-        "description": "Verified hardware, software, runtime, and backend combinations for GEAK 4.0.0, AMD Instinct GPUs, ROCm, Claude Code, serving backends, kernel languages, and data types."
-        "keywords": "GEAK, compatibility, ROCm, AMD Instinct, MI300X, MI355X, sglang, vLLM, Triton, HIP, CK, FlyDSL, Claude Code"
+        "description": "Verified hardware, software, and agent-runtime combinations for GEAK 4.0.0, including Claude Code and the Codex thin adapter."
+        "keywords": "GEAK, compatibility, ROCm, AMD Instinct, MI300X, MI355X, sglang, vLLM, Triton, HIP, CK, FlyDSL, Claude Code, Codex"
 ---
 
 # GEAK compatibility matrix
 
-Verified hardware, software, runtime, and backend combinations for GEAK 4.0.0 (a Claude Code +
-JS-Workflow GPU optimizer; no pip package, no CLI). Only tested configurations are listed.
+Verified hardware, software, runtime, and backend combinations for GEAK 4.0.0. Deterministic JS Workflows
+can use Claude Code or the Codex thin adapter. Only tested configurations are listed.
 
 Use the following matrix to view the compatibility and system requirements:
 
@@ -34,6 +34,19 @@ to the local `gfx` at build time.
 | Default model | `claude-opus-4-8` | Default used by the external-orchestrator entry point (`interface/run_e2e.py`). |
 | Effort | `ultracode` | Default effort for `interface/run_e2e.py`. |
 
+## Runtime — Codex thin adapter
+
+| Component | Requirement | Notes |
+|---|---|---|
+| Node.js | ≥ 18 | Executes trusted GEAK Workflow control flow. |
+| Codex CLI | Required flags are probed | Must already be installed and authenticated; GEAK does not pin a version. |
+| Launch mode | `workspace-write` + `--approve-for-me` | Default; additional output/task directories are passed with `--add-dir`. |
+| Model | Codex configuration | `GEAK_CODEX_MODEL` overrides only when explicitly set. |
+
+`GEAK_CODEX_BYPASS=1` is restricted to externally isolated GPU runners because it disables approvals and
+sandboxing. The adapter contract is covered by non-GPU fake-CLI tests; production readiness still requires the
+gated live leaf, single-kernel AMD GPU, and constrained E2E validations.
+
 ## Invocation mode
 
 | Mode | Notes |
@@ -42,6 +55,7 @@ to the local `gfx` at build time.
 | Direct `Workflow` call (e2e) | `scriptPath: "<repo>/e2e_workflow/e2e_workflow.js"` | 
 | Direct `Workflow` call (single kernel) | `scriptPath: "<repo>/kernel_workflow/kernel_workflow.js"` | 
 | External orchestrator (Hyperloom) | `python interface/run_e2e.py <handoff.json> <result.json>` | 
+| External orchestrator with Codex | `GEAK_AGENT_BACKEND=codex python interface/run_e2e.py <handoff.json> <result.json>` |
 
 ## Profilers
 
@@ -99,4 +113,3 @@ The serving stack is not baked in; `args.backend` selects `scripts/adapters/<bac
 |---|---|
 | `none` (default) | Throughput delta + greedy output parity. |
 | `gsm8k` | Sampled gsm8k (5-shot, greedy, fixed seed) using `scripts/gsm8k_eval.py` against an OpenAI-compatible `/v1` endpoint. | 
-

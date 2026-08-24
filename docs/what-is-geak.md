@@ -9,7 +9,7 @@ myst:
 
 GEAK (Generating Efficient AI-Centric Kernels) is a multi-agent GPU performance optimizer for AMD
 Instinct™ MI GPUs (CDNA; the on-box card is auto-detected). It ships two deterministic Workflows,
-driven by Claude Code:
+driven by Claude Code by default, or by Codex through the thin adapter:
 
 | Workflow | Scope | What it optimizes |
 | --- | --- | --- |

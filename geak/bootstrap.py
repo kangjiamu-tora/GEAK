@@ -1,12 +1,16 @@
-"""GEAK v4 bootstrap — clone the repo locally and install the Claude Code CLI.
+"""GEAK v4 bootstrap — clone GEAK and install its default Claude Code runtime.
 
-GEAK v4 is not a package you `import`; its Workflows run *inside* Claude Code
-from a repo checkout. So `pip install git+https://github.com/AMD-AGI/GEAK` does
-three things:
+GEAK's deterministic Workflows can use Claude Code (default) or the optional
+Codex thin adapter. ``pip install git+https://github.com/AMD-AGI/GEAK`` does
+three things for the default backend:
 
   1. pip installs the Python runtime deps (pyproject.toml [project.dependencies]).
   2. This bootstrap clones the full GEAK repo to a working dir ($GEAK_HOME).
   3. This bootstrap installs the Claude Code CLI (native installer; npm fallback).
+
+The optional Codex backend requires Node.js 18+ and an already installed,
+authenticated ``codex`` CLI. The bootstrap deliberately does not install or
+authenticate Codex.
 
 Everything here is best-effort: a failure warns but never aborts the install.
 It runs once, during the wheel build — there is no separate re-run command.
@@ -284,9 +288,13 @@ def print_next_steps() -> None:
         "   (Persist your choice in ~/.bashrc so future shells inherit it.)\n\n"
         "2) Launch Claude Code in auto-approve mode from the repo root:\n"
         "     %scd %s%s\n"
-        "     %sIS_SANDBOX=1 claude --dangerously-skip-permissions%s"
+        "     %sIS_SANDBOX=1 claude --dangerously-skip-permissions%s\n\n"
+        "Optional Codex backend (external run_e2e.py integration): install and "
+        "authenticate Codex separately, ensure Node.js 18+ is on PATH, then set:\n"
+        "     %sexport GEAK_AGENT_BACKEND=codex%s\n"
+        "GEAK does not install or authenticate Codex."
         % (C_CMD, C_OFF, C_CMD, C_OFF, C_CMD, C_OFF, C_CMD, C_OFF,
-           C_CMD, GEAK_HOME, C_OFF, C_CMD, C_OFF)
+           C_CMD, GEAK_HOME, C_OFF, C_CMD, C_OFF, C_CMD, C_OFF)
     )
 
 

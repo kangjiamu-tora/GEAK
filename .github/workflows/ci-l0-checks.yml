@@ -185,7 +185,7 @@ jobs:
           /tmp/gitleaks dir . --no-banner --redact --config .gitleaks.toml
 
   node-regression:
-    name: Node regression (expert_skills)
+    name: Node regression (workflows + Codex adapter)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -196,6 +196,11 @@ jobs:
       # Pure node (fs/path only) — no npm install needed.
       - name: expert_skills OFF-identical regression
         run: node e2e_workflow/scripts/test_expert_skills_off_identical.js
+      - name: Codex thin-adapter syntax and unit tests
+        run: |
+          node --check interface/codex_workflow/runtime.js
+          node --check interface/codex_workflow/runner.js
+          node --test interface/codex_workflow/test/runtime.test.js
 
   dry-run:
     name: run_e2e dry-run mapping

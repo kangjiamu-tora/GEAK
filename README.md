@@ -15,8 +15,9 @@ sglang, and GEAK runs the full optimization loop: it finds the bottlenecks, gene
 across paths such as Triton, FlyDSL, TileLang, and HIP, and validates the speedup on the real system. What
 normally takes weeks of expert kernel engineering becomes an automated, repeatable, and self-improving process.
 
-GEAK targets AMD Instinct MI GPUs (CDNA, e.g. gfx942 / gfx950; the on-box card is auto-detected), driven by
-Claude Code and orchestrated by deterministic JS Workflows. It ships two workflows, each for a different scenario:
+GEAK targets AMD Instinct MI GPUs (CDNA, e.g. gfx942 / gfx950; the on-box card is auto-detected). Deterministic
+JS Workflows own control flow, with Claude Code as the default agent backend and Codex available through a
+thin adapter. It ships two workflows, each for a different scenario:
 
 | Workflow | Scope | What it optimizes |
 | --- | --- | --- |
@@ -44,6 +45,7 @@ optimize a single kernel.
 - An **AMD Instinct MI GPU** (CDNA, e.g. gfx942 / gfx950), **ROCm 6+**, a profiler (`rocprof-compute` /
   `rocprofv3` / `rocprof`), Python 3.8+.
 - For E2E: a running-capable serving backend (`sglang` or `vllm`) and the model weights on disk.
+- For the optional Codex backend: Node.js 18+ and a separately installed and authenticated `codex` CLI.
 
 > **⚠️ Build your kernel environment first.** GEAK does **not** install the toolchains your kernels
 > need (e.g. PyTorch, Triton, FlyDSL, hipBLASLt) — these differ per kernel. Set up and verify the
@@ -54,6 +56,8 @@ optimize a single kernel.
 Installing GEAK does three things: installs the `geak` Python package + deps, clones the GEAK repo, and installs
 the Claude Code CLI. By default the repo lands in `./GEAK` under the directory you run the command from (override
 the location with `GEAK_HOME`). Pick either method — both end up the same:
+
+Claude remains the default backend. The installer does not install or authenticate Codex.
 
 **A. One-liner** — run it in the directory where you want GEAK to live:
 
@@ -102,6 +106,22 @@ IS_SANDBOX=1 claude --dangerously-skip-permissions
 
 Then just describe what you want in natural language (examples below). Claude Code resolves the paths and
 invokes the `Workflow` tool for you.
+
+### Optional: use Codex for `run_e2e.py`
+
+After installing and authenticating Codex separately, select it for the stable external interface:
+
+```bash
+node --version                    # must be 18+
+codex exec --help
+export GEAK_AGENT_BACKEND=codex
+python interface/run_e2e.py handoff.json result.json
+```
+
+The existing workflow JavaScript and roles are unchanged. The Node runtime executes their deterministic control
+flow and starts one `codex exec` process for each `agent()` leaf. See
+[`interface/codex_workflow/README.md`](interface/codex_workflow/README.md) for sandbox, concurrency, model,
+timeout, and writable-directory configuration.
 
 ---
 
@@ -159,7 +179,7 @@ Spawn one agent per kernel with isolated GPU assignments; GPU access is serializ
 
 Control flow — the budget loop, fan-out, verification, and stop conditions — is **deterministic JS** in
 `kernel_workflow.js` / `e2e_workflow.js`. LLM agents are called only for judgement (analysis, strategy,
-optimization). This makes runs reliable and reproducible.
+optimization). Both agent backends execute this same JavaScript rather than interpreting it.
 
 ## Results — single-kernel
 
@@ -183,6 +203,7 @@ GEAK/
 │   ├── roles/  knowledge/  scripts/   # gpu_lock.sh, profile_kernel.sh
 │   └── README.md
 ├── perf_knowledge/      # AMD operator × backend SOTA knowledge base (REFERENCE ONLY)
+├── interface/           # Stable e2e contract + Codex thin-adapter runtime
 ├── examples/            # Example kernel tasks, benchmark comparisons, real e2e runs
 └── exp/                 # Experiment outputs (timestamped per run)
 ```
@@ -194,7 +215,7 @@ How the workflows in this repo relate to the GEAK_v3 baseline:
 |                        | GEAK v3 (baseline)                        | kernel_workflow                                                  | e2e_workflow                                                       |
 | ---------------------- | ----------------------------------------- | --------------------------------------------------------------- | ----------------------------------------------------------------- |
 | **Target**             | Single kernel                             | Single kernel                                                   | **Whole-model sglang/vLLM serving throughput**                    |
-| **Agent backend**      | miniswe                                   | Claude                                                          | Claude                                                            |
+| **Agent backend**      | miniswe                                   | Claude / Codex                                                  | Claude / Codex                                                     |
 | **Architecture**       | Orchestrator + parallel workers           | Hierarchical: Director → TechLead → Engineers → Merge           | e2e Director → System Architect → Profiler / Config Tuner / Kernel Extractor / e2e Integrator (wraps the kernel layer) |
 | **Iteration**          | Multi-round                               | Multi-round, budget-controlled                                  | Multi-round, Amdahl-triaged, budget-controlled                    |
 | **Orchestration**      | Python                                    | **Deterministic JS** — loop/parallelism/verification in code   | **Deterministic JS**                                              |

@@ -51,6 +51,7 @@ import json
 import os
 import shutil
 import signal
+import subprocess
 import sys
 import tempfile
 import types
@@ -656,6 +657,16 @@ class TestClassifyError(_RunE2ECase):
             rx._classify_error(RuntimeError("claude CLI failed (rc=2): boom")),
             "cli_failed",
         )
+        self.assertEqual(rx._classify_error(rx.MissingNodeError("node")),
+                         "missing_node")
+        self.assertEqual(rx._classify_error(rx.MissingCodexCLIError("codex")),
+                         "missing_codex_cli")
+        self.assertEqual(rx._classify_error(rx.CodexCLIFailure("leaf")),
+                         "codex_cli_failure")
+        self.assertEqual(rx._classify_error(rx.InvalidWorkflowOutput("json")),
+                         "invalid_workflow_output")
+        self.assertEqual(rx._classify_error(rx.CodexAdapterError("adapter")),
+                         "adapter_failure")
         self.assertEqual(rx._classify_error(ValueError("other")), "runner_error")
 
 
@@ -926,6 +937,113 @@ class TestInvokeWorkflow(_RunE2ECase):
         self.patch_rx("_invoke_via_cli", lambda p, t: "no json at all")
         with self.assertRaises(rx.WorkflowParseError):
             rx.invoke_workflow("P", 100, None)
+
+
+class TestInvokeCodexWorkflow(_RunE2ECase):
+    class FakePopen:
+        def __init__(self, stdout='{"eval_dir":"/run/codex"}', stderr="",
+                     returncode=0, communicate_error=None):
+            self.stdout_value = stdout
+            self.stderr_value = stderr
+            self.returncode = returncode
+            self.communicate_error = communicate_error
+            self.pid = 4242
+            self.requests = []
+
+        def communicate(self, request, timeout=None):
+            self.requests.append((request, timeout))
+            if self.communicate_error:
+                raise self.communicate_error
+            return self.stdout_value, self.stderr_value
+
+        def poll(self):
+            return self.returncode
+
+    def _install_popen(self, fake):
+        calls = []
+
+        def popen(argv, **kwargs):
+            calls.append((argv, kwargs))
+            return fake
+
+        self.patch_rx("shutil", types.SimpleNamespace(which=lambda name: "/usr/bin/node"))
+        self.patch_rx("subprocess", types.SimpleNamespace(
+            Popen=popen,
+            PIPE=subprocess.PIPE,
+            TimeoutExpired=subprocess.TimeoutExpired,
+        ))
+        return calls
+
+    def test_request_contract_and_process_group_are_exact(self):
+        fake = self.FakePopen(
+            stdout='{"eval_dir":"/run/codex","throughput_speedup":1.2}',
+            stderr="phase log\n",
+        )
+        calls = self._install_popen(fake)
+        with contextlib.redirect_stderr(io.StringIO()) as err:
+            result = rx.invoke_codex_workflow(Path("/repo/e2e.js"), {"x": 1}, 90)
+        self.assertEqual(result["throughput_speedup"], 1.2)
+        self.assertEqual(len(calls), 1)
+        argv, kwargs = calls[0]
+        self.assertEqual(argv, ["/usr/bin/node", str(rx.CODEX_RUNNER)])
+        self.assertEqual(kwargs["cwd"], str(rx.GEAK_ROOT))
+        self.assertTrue(kwargs["start_new_session"])
+        self.assertTrue(kwargs["text"])
+        request, timeout = fake.requests[0]
+        self.assertEqual(json.loads(request), {
+            "script_path": "/repo/e2e.js", "args": {"x": 1},
+        })
+        self.assertEqual(timeout, 90)
+        self.assertEqual(err.getvalue(), "phase log\n")
+
+    def test_missing_node_has_a_stable_exception(self):
+        self.patch_rx("shutil", types.SimpleNamespace(which=lambda name: None))
+        with self.assertRaises(rx.MissingNodeError):
+            rx.invoke_codex_workflow(Path("/repo/e2e.js"), {}, 90)
+
+    def test_runner_error_markers_map_to_stable_types(self):
+        cases = [
+            ("missing_codex_cli", rx.MissingCodexCLIError),
+            ("codex_cli_failure", rx.CodexCLIFailure),
+            ("invalid_workflow_output", rx.InvalidWorkflowOutput),
+            ("adapter_failure", rx.CodexAdapterError),
+        ]
+        for code, expected in cases:
+            exc = rx._codex_runner_error(
+                f"prior log\nGEAK_CODEX_ERROR code={code} message=detail\n", 1
+            )
+            self.assertIs(type(exc), expected)
+            self.assertEqual(str(exc), "detail")
+
+    def test_nonzero_runner_exit_uses_stable_marker(self):
+        fake = self.FakePopen(
+            stdout="",
+            stderr=("log\nGEAK_CODEX_ERROR code=missing_codex_cli "
+                    "message=Codex CLI not found\n"),
+            returncode=1,
+        )
+        self._install_popen(fake)
+        with contextlib.redirect_stderr(io.StringIO()):
+            with self.assertRaises(rx.MissingCodexCLIError):
+                rx.invoke_codex_workflow(Path("/repo/e2e.js"), {}, 90)
+
+    def test_stdout_must_be_one_eval_dir_bearing_json_object(self):
+        for stdout in ('log\n{"eval_dir":"/x"}', '[]', '{"status":"ok"}'):
+            fake = self.FakePopen(stdout=stdout)
+            self._install_popen(fake)
+            with self.assertRaises(rx.InvalidWorkflowOutput):
+                rx.invoke_codex_workflow(Path("/repo/e2e.js"), {}, 90)
+
+    def test_timeout_terminates_the_runner_group(self):
+        fake = self.FakePopen(
+            communicate_error=subprocess.TimeoutExpired(["node"], 7)
+        )
+        self._install_popen(fake)
+        terminated = []
+        self.patch_rx("_terminate_process_group", lambda proc: terminated.append(proc))
+        with self.assertRaises(TimeoutError):
+            rx.invoke_codex_workflow(Path("/repo/e2e.js"), {}, 7)
+        self.assertEqual(terminated, [fake])
 
 
 # =========================================================================== #
@@ -1447,6 +1565,7 @@ class TestJourneyReturnPath(_RunE2ECase):
 class TestMain(_RunE2ECase):
     def setUp(self):
         super().setUp()
+        os.environ.pop("GEAK_AGENT_BACKEND", None)
         self.patch_rx("_git_short_sha", lambda root: "abc1234")
         self.exp_root = self.tmp / "exp" / "geak"
         self.exp_root.mkdir(parents=True)
@@ -1578,6 +1697,43 @@ class TestMain(_RunE2ECase):
         persisted = json.loads(
             (self.eval_dir / rx.WORKFLOW_RETURN_FILE).read_text())
         self.assertEqual(persisted["final_throughput_tok_s"], 535.352)
+
+    def test_codex_backend_dispatches_directly_to_the_node_runner(self):
+        os.environ["GEAK_AGENT_BACKEND"] = "codex"
+        seen = {}
+        self.patch_rx(
+            "invoke_workflow",
+            lambda *a, **k: self.fail("Claude path must remain unused"),
+        )
+
+        def invoke(script_path, args, timeout_s):
+            seen.update(script_path=script_path, args=args, timeout_s=timeout_s)
+            return {
+                "eval_dir": str(self.eval_dir),
+                "baseline_throughput_tok_s": 400.0,
+                "final_throughput_tok_s": 500.0,
+                "throughput_speedup": 1.25,
+                "output_parity": "pass",
+            }
+
+        self.patch_rx("invoke_codex_workflow", invoke)
+        rc, stdout = self._run(self._handoff())
+        self.assertEqual(rc, 0)
+        self.assertEqual(json.loads(stdout)["speedup"], 1.25)
+        self.assertEqual(seen["script_path"], rx.E2E_SCRIPT)
+        self.assertEqual(seen["args"]["eval_dir"], str(self.eval_dir))
+        self.assertEqual(seen["timeout_s"], 43200)
+
+    def test_codex_prerequisite_failure_is_emitted_with_stable_class(self):
+        os.environ["GEAK_AGENT_BACKEND"] = "codex"
+        self.patch_rx(
+            "invoke_codex_workflow",
+            lambda *a, **k: (_ for _ in ()).throw(rx.MissingCodexCLIError("missing")),
+        )
+        rc, _stdout = self._run(self._handoff())
+        self.assertEqual(rc, 1)
+        out = json.loads(self.result_path.read_text())
+        self.assertEqual(out["error_class"], "missing_codex_cli")
 
     def test_resume_short_circuits_a_terminal_eval_dir(self):
         """Re-entering a completed eval_dir must re-emit from disk, never burn a

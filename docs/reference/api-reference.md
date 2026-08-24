@@ -7,7 +7,7 @@ myst:
 
 # GEAK API reference
 
-GEAK v4's public surface is not a CLI or a Python package. It is: the Workflow scripts
+GEAK v4's public surface is the Workflow scripts
 (`e2e_workflow.js`, `kernel_workflow.js`), the helper scripts they call, and a stable
 external-orchestrator contract (`interface/run_e2e.py`). For walkthroughs see
 [Run a workflow](../how-to/run-agent.md).
@@ -22,6 +22,10 @@ Workflow({ scriptPath: "<absolute path to *.js>", args: { /* see below */ } })
 
 `workflow_dir` is always required (a JS workflow can't read its own path). Natural-language prompts
 are mapped onto `args`; there is no config file for workflow parameters.
+
+With `GEAK_AGENT_BACKEND=codex`, `interface/codex_workflow/runner.js` supplies compatible
+`agent`, `workflow`, `parallel`, `phase`, and `log` primitives and executes this same JavaScript. It does not
+fork or reinterpret the workflow logic.
 
 | Workflow | scriptPath | Purpose |
 |---|---|---|

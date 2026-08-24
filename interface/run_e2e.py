@@ -10,11 +10,11 @@ Contract (stable, see interface/run_e2e.md):
 * Maps the stable handoff fields onto ``e2e_workflow/e2e_workflow.js``
   args (this mapping is the ONLY thing that changes when the JS workflow's args
   evolve; the handoff/result JSON contract stays put).
-* Invokes the JS workflow through the Claude Code ``Workflow`` tool (the JS
-  workflow CANNOT be run with ``node`` directly — it needs the agent runtime's
-  Workflow/agent/parallel/phase primitives, which are only exposed under
-  ``--effort ultracode``). Prefers the Python ``claude_agent_sdk``; falls back
-  to the ``claude -p`` CLI.
+* Invokes the JS workflow through the selected agent backend. Claude (the
+  default) uses the existing ``Workflow`` tool SDK/CLI path. Codex uses the
+  dependency-free Node compatibility runtime in ``interface/codex_workflow``;
+  that runtime executes the same JS control flow and delegates only ``agent()``
+  leaves to ``codex exec``.
 * Normalizes the workflow artifacts (``director_e2e_validation.json`` +
   ``baseline/bench_summary.json`` + ``final/``) into the stable ``result.json``.
 
@@ -63,6 +63,7 @@ GEAK_ROOT = INTERFACE_DIR.parent
 E2E_DIR = GEAK_ROOT / "e2e_workflow"
 E2E_SCRIPT = E2E_DIR / "e2e_workflow.js"
 BENCH_SCRIPT = E2E_DIR / "scripts" / "bench_e2e.sh"
+CODEX_RUNNER = INTERFACE_DIR / "codex_workflow" / "runner.js"
 
 # Workflow primitives are only available at this effort tier (see README).
 CLAUDE_EFFORT = os.environ.get("GEAK_CLAUDE_EFFORT", "ultracode")
@@ -864,6 +865,138 @@ class WorkflowParseError(RuntimeError):
     """The agent output carried no parseable workflow return (no ``eval_dir``)."""
 
 
+class CodexAdapterError(RuntimeError):
+    """Base class for stable Codex adapter failures."""
+
+
+class MissingNodeError(CodexAdapterError):
+    """The configured Node.js executable is unavailable."""
+
+
+class MissingCodexCLIError(CodexAdapterError):
+    """The Node runtime could not launch the configured Codex CLI."""
+
+
+class CodexCLIFailure(CodexAdapterError):
+    """A ``codex exec`` leaf exited unsuccessfully."""
+
+
+class InvalidWorkflowOutput(CodexAdapterError):
+    """The Node runner did not emit exactly one valid Workflow result object."""
+
+
+_CODEX_ERROR_TYPES = {
+    "adapter_failure": CodexAdapterError,
+    "missing_codex_cli": MissingCodexCLIError,
+    "codex_cli_failure": CodexCLIFailure,
+    "invalid_workflow_output": InvalidWorkflowOutput,
+}
+
+
+def _terminate_process_group(proc: subprocess.Popen, grace_s: float = 12.0) -> None:
+    """Terminate only ``proc``'s session, escalating after the grace period.
+
+    The Node runner gives its detached leaf groups 10 seconds before SIGKILL;
+    the two-second margin lets that cleanup finish before Python kills the runner.
+    """
+    if proc.poll() is not None:
+        return
+    try:
+        os.killpg(proc.pid, signal.SIGTERM)
+    except (OSError, ProcessLookupError):
+        try:
+            proc.terminate()
+        except OSError:
+            return
+    try:
+        proc.wait(timeout=grace_s)
+        return
+    except subprocess.TimeoutExpired:
+        pass
+    try:
+        os.killpg(proc.pid, signal.SIGKILL)
+    except (OSError, ProcessLookupError):
+        try:
+            proc.kill()
+        except OSError:
+            return
+    try:
+        proc.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        pass
+
+
+def _codex_runner_error(stderr: str, returncode: int) -> CodexAdapterError:
+    """Turn the runner's stable marker into a stable Python exception type."""
+    marker = "GEAK_CODEX_ERROR code="
+    for line in reversed((stderr or "").splitlines()):
+        if marker not in line:
+            continue
+        payload = line.split(marker, 1)[1]
+        code, separator, message = payload.partition(" message=")
+        exc_type = _CODEX_ERROR_TYPES.get(code.strip(), CodexAdapterError)
+        detail = message.strip() if separator else payload.strip()
+        return exc_type(detail or f"Codex runner failed with code {code.strip()}")
+    return CodexAdapterError(
+        f"Codex workflow adapter failed (rc={returncode}): {(stderr or '')[-4000:]}"
+    )
+
+
+def invoke_codex_workflow(script_path: Path, args: dict, timeout_s: int) -> dict:
+    """Execute one GEAK Workflow through the Node/Codex compatibility runner."""
+    configured_node = os.environ.get("GEAK_NODE_BIN", "node").strip() or "node"
+    node = shutil.which(configured_node)
+    if not node:
+        raise MissingNodeError(f"Node.js executable not found: {configured_node}")
+
+    request = json.dumps({"script_path": str(script_path), "args": args})
+    try:
+        proc = subprocess.Popen(
+            [node, str(CODEX_RUNNER)],
+            cwd=str(GEAK_ROOT),
+            env=dict(os.environ),
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            start_new_session=True,
+        )
+    except FileNotFoundError as exc:
+        raise MissingNodeError(f"Node.js executable not found: {configured_node}") from exc
+    except OSError as exc:
+        raise CodexAdapterError(f"Could not start the Codex workflow runner: {exc}") from exc
+
+    try:
+        stdout, stderr = proc.communicate(request, timeout=timeout_s)
+    except subprocess.TimeoutExpired as exc:
+        _terminate_process_group(proc)
+        raise TimeoutError(
+            f"Codex workflow runner exceeded the {timeout_s}s E2E timeout"
+        ) from exc
+    except BaseException:
+        _terminate_process_group(proc)
+        raise
+
+    if stderr:
+        sys.stderr.write(stderr)
+    if proc.returncode != 0:
+        raise _codex_runner_error(stderr, proc.returncode)
+
+    raw = (stdout or "").strip()
+    try:
+        result = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise InvalidWorkflowOutput(
+            "Codex runner stdout was not exactly one JSON object: "
+            f"{raw[-2000:]}"
+        ) from exc
+    if not isinstance(result, dict) or not result.get("eval_dir"):
+        raise InvalidWorkflowOutput(
+            "Codex Workflow output must be an object with a non-empty eval_dir"
+        )
+    return result
+
+
 def _iter_json_objects(raw: str):
     """Yield every parseable top-level JSON object in ``raw`` (in order).
 
@@ -951,6 +1084,16 @@ def _classify_error(exc: BaseException) -> str:
         return "timeout"
     if isinstance(exc, WorkflowParseError):
         return "workflow_parse_error"
+    if isinstance(exc, MissingNodeError):
+        return "missing_node"
+    if isinstance(exc, MissingCodexCLIError):
+        return "missing_codex_cli"
+    if isinstance(exc, CodexCLIFailure):
+        return "codex_cli_failure"
+    if isinstance(exc, InvalidWorkflowOutput):
+        return "invalid_workflow_output"
+    if isinstance(exc, CodexAdapterError):
+        return "adapter_failure"
     if isinstance(exc, ImportError):
         return "sdk_import_failed"
     msg = str(exc)
@@ -2462,6 +2605,9 @@ def main(argv: list[str]) -> int:
     bench_protocol = apply_bench_protocol(h)
     alignment_flags = apply_alignment_flags(h)
     prompt = build_prompt(ps_args)
+    agent_backend = (
+        os.environ.get("GEAK_AGENT_BACKEND", "claude").strip().lower() or "claude"
+    )
 
     if "--dry-run" in flags:
         print(json.dumps({"mapped_args": ps_args, "bench_client": bench_client,
@@ -2469,6 +2615,7 @@ def main(argv: list[str]) -> int:
                           "magpie_launch_script": os.environ.get("MAGPIE_LAUNCH_SCRIPT", ""),
                           "bench_protocol": bench_protocol,
                           "alignment_flags": alignment_flags,
+                          "agent_backend": agent_backend,
                           "inferencex_path": os.environ.get("INFERENCEX_PATH", ""),
                           "prompt": prompt, "e2e_script": str(E2E_SCRIPT)}, indent=2))
         return 0
@@ -2603,7 +2750,15 @@ def main(argv: list[str]) -> int:
     err: object = None
     err_class: str | None = None
     try:
-        wf = invoke_workflow(prompt, timeout_s, ps_args["eval_dir"])
+        if agent_backend == "claude":
+            wf = invoke_workflow(prompt, timeout_s, ps_args["eval_dir"])
+        elif agent_backend == "codex":
+            wf = invoke_codex_workflow(E2E_SCRIPT, ps_args, timeout_s)
+        else:
+            raise CodexAdapterError(
+                "GEAK_AGENT_BACKEND must be 'claude' or 'codex'; "
+                f"received {agent_backend!r}"
+            )
     except Exception as e:  # scrape/crash/timeout/SIGTERM: recover from disk.
         err = e
         err_class = _classify_error(e)

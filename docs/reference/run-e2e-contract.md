@@ -9,8 +9,7 @@ myst:
 
 `interface/` is the only surface an external orchestrator (for example, Hyperloom)
 touches. Everything volatile about the e2e workflow (the `e2e_workflow.js` arg
-names, the Claude Code `Workflow` invocation, the `--effort ultracode`
-requirement, the SDK-vs-CLI choice) is hidden behind one command and two JSON
+names and the selected agent backend's invocation details) is hidden behind one command and two JSON
 files. The result schema is versioned so callers can distinguish contract
 changes while the workflow evolves internally.
 
@@ -34,6 +33,18 @@ hard-coded handle.
 
 The fast-path artifacts live under `<exp_root>/geak_e2e_moe_int4/`
 (`baseline/`, `validation/final/`, `final/` bundle, `director_e2e_validation.json`).
+
+### Agent backend
+
+Set `GEAK_AGENT_BACKEND=claude|codex`; the default is `claude`. The Claude SDK/CLI path is unchanged.
+The Codex path requires Node.js 18+ and an already installed/authenticated Codex CLI, executes the same
+Workflow JavaScript, and delegates only `agent()` leaves to `codex exec`.
+
+Codex settings are `GEAK_CODEX_BIN`, `GEAK_NODE_BIN`, `GEAK_CODEX_MODEL`,
+`GEAK_CODEX_MAX_AGENTS`, `GEAK_CODEX_SANDBOX`, `GEAK_CODEX_BYPASS`,
+`GEAK_CODEX_ADD_DIRS`, and `GEAK_CODEX_AGENT_TIMEOUT_MS`. The adapter probes required CLI flags. Normal mode
+uses `--approve-for-me`; bypass mode is only for externally isolated GPU runners. GEAK does not install or
+authenticate Codex.
 
 ## `handoff.json` (caller → workflow)
 

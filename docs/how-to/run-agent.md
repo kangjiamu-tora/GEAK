@@ -1,14 +1,14 @@
 ---
 myst:
     html_meta:
-        "description": "Run a GEAK v4 workflow from Claude Code: end-to-end sglang/vLLM serving-throughput optimization or single-kernel optimization, with depth modes and the accuracy gate."
-        "keywords": "GEAK, run workflow, serving throughput, single kernel, Claude Code, Workflow, sglang, vLLM, deep mode, gsm8k"
+        "description": "Run a GEAK v4 workflow with Claude Code or the Codex thin adapter."
+        "keywords": "GEAK, run workflow, serving throughput, single kernel, Claude Code, Codex, Workflow, sglang, vLLM, deep mode, gsm8k"
 ---
 
 # Run a GEAK workflow
 
-GEAK v4 runs inside Claude Code, orchestrated by deterministic JS Workflows. There is no
-`pip install` and no CLI: launch Claude Code and describe the task; it invokes the `Workflow` tool.
+GEAK v4 uses deterministic JS Workflows with Claude Code as the default backend. Launch Claude Code and
+describe the task, or select Codex for the stable `interface/run_e2e.py` entry point.
 
 ## Prerequisites
 
@@ -18,6 +18,7 @@ Before running a workflow, ensure the following are in place.
 - **ROCm 6+** with `rocminfo` / `rocm-smi`, and a profiler (`rocprof-compute` / `rocprofv3` / `rocprof`).
 - **Python 3.8+**.
 - **Claude Code ≥ 2.1.177** (dynamic Workflow feature). Check `claude --version`.
+- **For Codex:** Node.js 18+ and a separately installed and authenticated `codex` CLI.
 - **For E2E:** a running-capable `sglang` or `vllm` and the model weights on disk.
 
 ## Get the repo and launch Claude Code
@@ -81,6 +82,17 @@ wait
 Each process writes its output to a per-kernel log. The `kernel_workflow` creates its experiment
 directory under `kernel_workflow/exp/team_<kernel>_<timestamp>/`. The `-p` flag runs Claude Code
 non-interactively (print mode); the process exits when the workflow completes.
+
+## Run the external E2E interface with Codex
+
+```bash
+export GEAK_AGENT_BACKEND=codex
+python interface/run_e2e.py /path/to/handoff.json /path/to/result.json
+```
+
+This executes the same unchanged `e2e_workflow.js` control flow and delegates only leaf agents to Codex.
+Claude remains the default when `GEAK_AGENT_BACKEND` is unset. GEAK never installs or authenticates Codex;
+see the [external contract](../reference/run-e2e-contract.md) for adapter configuration.
 
 ## Depth modes (e2e)
 

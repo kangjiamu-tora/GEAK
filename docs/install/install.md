@@ -1,14 +1,15 @@
 ---
 myst:
     html_meta:
-        "description": "Install GEAK 4.0.0: pip install git+ downloads the repo, installs a recent Claude Code, and the Python deps (plus a serving backend for E2E, ROCm required)."
-        "keywords": "GEAK, install, ROCm, Claude Code, Workflow, sglang, vLLM, AMD Instinct, setup"
+        "description": "Install GEAK 4.0.0 with Claude Code by default or a separately installed Codex CLI, plus ROCm and serving dependencies."
+        "keywords": "GEAK, install, ROCm, Claude Code, Codex, Workflow, sglang, vLLM, AMD Instinct, setup"
 ---
 
 # Install GEAK
 
-GEAK 4.0.0 is not a Python package. It is a set of Workflows (`e2e_workflow.js` / `kernel_workflow.js`)
-that run inside Claude Code. "Installing" means: get the repo, get a recent Claude Code, and have a
+GEAK 4.0.0 is a set of deterministic Workflows (`e2e_workflow.js` / `kernel_workflow.js`). Claude Code
+is the default agent backend; Codex is optional through a thin Node adapter. "Installing" means: get the
+repo, get the selected agent CLI, and have a
 working ROCm environment (plus a serving backend for E2E). For a first run, see
 [Run a workflow](../how-to/run-agent.md).
 
@@ -23,6 +24,7 @@ GEAK 4.0.0 requires the following software and hardware.
 | **A profiler** | One of `rocprof-compute`, `rocprofv3`, `rocprof` (also `omniperf` or `metrix`). Auto-detected. |
 | **Python 3.8+** | Tested on 3.12. |
 | **Claude Code ≥ 2.1.177** | Required for the dynamic Workflow feature. Check `claude --version`. |
+| **Codex prerequisites (optional)** | Node.js 18+ and a separately installed/authenticated `codex` CLI. |
 | **Anthropic API key** | Set as `ANTHROPIC_API_KEY`. Get one at [console.anthropic.com](https://console.anthropic.com). |
 | **Serving backend (E2E)** | A running-capable `sglang` or `vllm`, plus model weights on disk. |
 
@@ -33,6 +35,8 @@ Clone the repository and run the setup script.
 Installing GEAK installs the `geak` Python package + deps, clones the GEAK repo, and installs the Claude Code CLI.
 By default the repo lands in `./GEAK` under the directory you run the command from (override with `GEAK_HOME`).
 Pick either method — both end up the same:
+
+The bootstrap deliberately does not install or authenticate Codex.
 
 **A. One-liner** — run it in the directory where you want GEAK to live:
 
@@ -62,6 +66,17 @@ Launch GEAK:
 IS_SANDBOX=1 claude --dangerously-skip-permissions
 ```
 
+For an external `run_e2e.py` integration using Codex:
+
+```bash
+node --version                    # 18+
+codex exec --help                 # install and authenticate separately
+GEAK_AGENT_BACKEND=codex python interface/run_e2e.py handoff.json result.json
+```
+
+The default Codex sandbox is `workspace-write` with `--approve-for-me`. Do not set `GEAK_CODEX_BYPASS=1`
+unless the GPU runner is externally isolated.
+
 Nothing is compiled at clone time — the workflow `.js` files and their `roles/`, `knowledge/`, `scripts/`
 are used directly. Sandbox mode auto-approves the permissions the workflows need.
 
@@ -72,6 +87,10 @@ Run these checks before starting a workflow. A misconfigured environment fails d
 ```bash
 # Claude Code version (must be ≥ 2.1.177)
 claude --version
+
+# Optional Codex backend
+node --version
+codex exec --help
 
 # GPU is visible to ROCm
 rocminfo | grep -E "Name:|gfx"
